@@ -36,7 +36,6 @@ df['distance_from_home'] = (df['distance_from_home'] - np.mean(df['distance_from
 df['distance_from_last_transaction'] = (df['distance_from_last_transaction'] - np.mean(df['distance_from_last_transaction']))/np.std(df['distance_from_last_transaction'])
 df['ratio_to_median_purchase_price'] = (df['ratio_to_median_purchase_price'] - np.mean(df['ratio_to_median_purchase_price']))/np.std(df['ratio_to_median_purchase_price'])
 
-print(*df.columns.values)
 
 #split to legit and fraud frames
 legit, fraud = [x for _, x in df.groupby(df['fraud'] == 1)]
@@ -55,23 +54,20 @@ X = df.drop('fraud', axis='columns').to_numpy()
 X_train, X_test, y_train, y_test = train_test_split( X, y, test_size=0.2,shuffle=True)
 SEED = 58 # Set our RNG seed for reproducibility.
 
-#count 1 in y_train
-print("1 in y_train: ", np.count_nonzero(y_train == 0))
 
-print(len(y_train))
 n_queries = 100 # You can lower this to decrease run time
 
 # You can increase this to get error bars on your evaluation.
 # You probably need to use the parallel code to make this reasonable to compute
-n_repeats = 5
+n_repeats = 2
 
 permutations=[np.random.permutation(X_train.shape[0]) for _ in range(n_repeats)]
 
 for i in range(n_repeats):
-    if np.count_nonzero(y_train[permutations[0][0:2]] == 1) == 0:
+    if np.count_nonzero(y_train[permutations[i][0:2]] == 1) == 0:
         index = np.where(y_train == 1)[0][0]
         permutations[i][0] = index
-    if np.count_nonzero(y_train[permutations[0][0:2]] == 0) == 0:
+    if np.count_nonzero(y_train[permutations[i][0:2]] == 0) == 0:
         index = np.where(y_train == 0)[0][0]
         permutations[i][0] = index
 
@@ -85,7 +81,7 @@ ModelClass=LogisticRegression
 def train_committee(i_repeat, i_members, X_train, y_train, n_start):
     committee_results = []
     print('') # progress bars won't be displayed if not included
-
+    
     X_pool = X_train.copy()
     y_pool = y_train.copy()
 
@@ -116,7 +112,7 @@ def train_committee(i_repeat, i_members, X_train, y_train, n_start):
 
         # score = committee.score(X_test, y_test)
         pred = committee.predict(X_test)
-        score = sklearn.metrics.adjusted_rand_score(y_test, pred)
+        score = sklearn.metrics.balanced_accuracy_score(y_test, pred)
 
         committee_results.append(ResultsRecord(
             f'committe_{i_members}',
@@ -128,10 +124,9 @@ def train_committee(i_repeat, i_members, X_train, y_train, n_start):
 #random
 random_results = []
 
-ModelClass=LogisticRegression
+ModelClass = LogisticRegression
 
-n_start = 5
-
+n_start = 2
 
 for i_repeat in range(n_repeats):
     start_points = permutations[i_repeat][:n_start]
@@ -142,7 +137,7 @@ for i_repeat in range(n_repeats):
         #random leaner
         random_learner = random_learner.fit(X=X_train[query_indices, :], y=y_train[query_indices])
         # random_score = random_learner.score(X_test, y_test)
-        random_score = sklearn.metrics.adjusted_rand_score(y_test, random_learner.predict(X_test))
+        random_score = sklearn.metrics.balanced_accuracy_score(y_test, random_learner.predict(X_test))
         
         random_results.append(ResultsRecord('random', i_query, random_score))
         #committee leaner
@@ -156,7 +151,6 @@ result = Parallel(n_jobs=-1)(delayed(train_committee)(i,i_members,X_train,y_trai
 uncertain_results = []
 ModelClass=LogisticRegression
 
-n_start = 2
 addn = 1
 
 for i_repeat in range(n_repeats):
@@ -166,24 +160,25 @@ for i_repeat in range(n_repeats):
         
         #random leaner
         uncertain_learner = uncertain_learner.fit(X=X_train[us_query_indices, :], y=y_train[us_query_indices])
-
+        
         pred = uncertain_learner.predict_proba(X_test)
-        uncertain_score = sklearn.metrics.adjusted_rand_score(y_test, np.argmax(pred, axis=1))
+        uncertain_score = sklearn.metrics.balanced_accuracy_score(y_test, np.argmax(pred, axis=1))
         uncertain_results.append(ResultsRecord('uncertain', i_query, uncertain_score))
         
         pred = uncertain_learner.predict_proba(X_train)
+        
         for _ in range(addn):
             uncertain_index = np.argmax(1-np.max(pred, axis=1))
             pred = np.delete(pred, uncertain_index, axis=0)
-            us_query_indices = np.append(query_indices, uncertain_index)
+            us_query_indices = np.append(us_query_indices, uncertain_index)
 
 
 print('All jobs done')
-committee_results=[r for rs in result for r in rs]
+# committee_results=[r for rs in result for r in rs]
 
 df_results = pd.concat([pd.DataFrame(results)
                         for results in
-                        [random_results, committee_results, uncertain_results]])
+                        [random_results, uncertain_results]])
 
 df_results_mean=df_results.groupby(['estimator','query_id']).mean()
 df_results_std=df_results.groupby(['estimator','query_id']).std()
